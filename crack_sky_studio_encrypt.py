@@ -57,20 +57,16 @@ def screenshot_and_check_colors_optimized(device, areas):
 
     for key, area in areas.items():
         x1, y1, x2, y2 = area
-        has_non_background = False
-        for x in range(x1, x2):
-            for y in range(y1, y2):
-                if pixels[x, y] != background_color:
-                    has_non_background = True
-                    break
-            if has_non_background:
-                break
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        has_non_background = pixels[center_x, center_y] != background_color
         key_status[key] = has_non_background
+
         if not any(key_status.values()):
             falseCount += 1
         else:
             falseCount = 0
-        print(falseCount)
+
     return key_status
 
 
@@ -215,11 +211,11 @@ def main():
               "name": songName,
               "author": "crack for WindHide",
               "transcribedBy": "WindHide crack",
-              "bpm": bpm,
+              "bpm": int(bpm),
               "bitsPerPage": 15,
               "pitchLevel": 0,
               "isComposed": True,
-              "songNotes": parse_result_list(resultList, bpm),  # 将解析后的结果放入 songNotes 字段
+              "songNotes": parse_result_list(resultList, int(bpm)),  # 将解析后的结果放入 songNotes 字段
               "isEncrypted": False,
             }
         ]
@@ -229,4 +225,9 @@ def main():
         os.remove(destination_file)
 
 if __name__ == "__main__":
+
+    start_time = time.time()  # 记录开始时间
     main()
+    end_time = time.time()  # 记录结束时间
+    execution_time = end_time - start_time  # 计算执行时间
+    print(f"Execution time: {execution_time:.4f} seconds")  # 输出执行时间
