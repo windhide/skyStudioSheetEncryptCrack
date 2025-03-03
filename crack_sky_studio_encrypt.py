@@ -1,42 +1,21 @@
 import io
 import json
 import os
+import shutil
 import subprocess
+import time
+import chardet
+import easyocr
+import numpy as np
 from PIL import Image
 from platformdirs import user_desktop_dir
 
-keyTemplate = {
-    "key0": False,
-    "key1": False,
-    "key2": False,
-    "key3": False,
-    "key4": False,
-    "key5": False,
-    "key6": False,
-    "key7": False,
-    "key8": False,
-    "key9": False,
-    "key10": False,
-    "key11": False,
-    "key12": False,
-    "key13": False,
-    "key14": False
-}
 resultList = []
 falseCount = 0
-output = [
-    {
-        "name": "",
-        "author": "crack for WindHide",
-        "transcribedBy": "WindHide crack",
-        "bpm": "",
-        "bitsPerPage": 15,
-        "pitchLevel": 0,
-        "isComposed": True,
-        "songNotes": "",
-        "isEncrypted": False,
-    }
-]
+# 检查各区域是否满足条件
+background_color = (24, 24, 24)  # #181818 的 RGB 值
+sheet_input_direct = r"D:\Desktop\encrypted"
+mumu_direct = r"C:\Users\WindH\Documents\MuMu共享文件夹"
 
 # 检查 ADB 是否安装
 def check_adb():
@@ -74,8 +53,6 @@ def screenshot_and_check_colors_optimized(device, areas):
     img = Image.open(io.BytesIO(result.stdout)).convert("RGB")
     pixels = img.load()
 
-    # 检查各区域是否满足条件
-    background_color = (24, 24, 24)  # #181818 的 RGB 值
     key_status = {}
 
     for key, area in areas.items():
@@ -96,10 +73,38 @@ def screenshot_and_check_colors_optimized(device, areas):
         print(falseCount)
     return key_status
 
+
+def screenshot_and_ocr_bmp_number(device, area):
+    screenshot_path = "/sdcard/screen.png"
+    subprocess.run(["adb", "-s", device, "shell", "screencap", "-p", screenshot_path], check=True)
+    result = subprocess.run(
+        ["adb", "-s", device, "exec-out", f"cat {screenshot_path}"],
+        stdout=subprocess.PIPE,
+        check=True
+    )
+    subprocess.run(["adb", "-s", device, "shell", "rm", screenshot_path], check=True)
+    # 打开截图并转换为 RGB
+    img = Image.open(io.BytesIO(result.stdout)).convert("RGB")
+    x1, y1, x2, y2 = area
+    cropped_img = img.crop((x1, y1, x2, y2))
+    # 将 PIL 图像转换为 NumPy 数组
+    cropped_img_np = np.array(cropped_img)
+    # 使用 EasyOCR 进行数字识别
+    reader = easyocr.Reader(['en'])  # 只加载英文模型
+    result = reader.readtext(cropped_img_np, detail=0, allowlist='0123456789')  # 这里加 allowlist
+    return result
+
+
+def detect_encoding(file_path):
+    """检测文件编码"""
+    with open(file_path, 'rb') as f:
+        raw_data = f.read(1024)  # 读取部分数据进行检测
+    result = chardet.detect(raw_data)
+    return result['encoding']
+
 # 点击设备屏幕的指定位置 (x, y)
 def next_button(device):
     subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(240.7), str(429.3)], check=True)
-
 
 def parse_result_list(result_list, bpm):
     # 每节拍时长（毫秒）
@@ -125,9 +130,6 @@ def parse_result_list(result_list, bpm):
 
 
 def main():
-    # 步骤 1: 检查 ADB 安装
-    bpm = 350  # 这里填写速度 bpm
-    songName = "Nothing's New"
     check_adb()
     device = check_device()
 
@@ -150,31 +152,81 @@ def main():
         "key14": (866, 617, 896, 639)   # /
     }
 
-    while True:
-        key_status = screenshot_and_check_colors_optimized(device, key_areas)
-        resultList.append(key_status)
-        next_button(device)
+    # 定义固定按钮
+    menu_buttons = {
+        "open_sheet": (441.7, 354.5),
+        "import_sheet": (1191.0, 333.5),
+        "import_sheet_more": (61.9, 95.9),
+        "import_sheet_mumu_shared": (215.6, 597.5),
+        "import_sheet_file_select": (203.6, 967.2),
+        "go_to_in_sheet": (368.7, 347.5),
+        "end_options": (1194.0, 424.3),
+        "end_exit_to_main": (647.5, 510.2),
+        "end_exit_to_main_confirm": (517.5, 271.6),
+        "bpm_area": (91.9, 586.2, 137.8, 607.2),
+    }
 
-        if falseCount >= 150:
-            break
+    files = os.listdir(sheet_input_direct)
+    # 逐个复制文件
+    for file_name in files:
+        source_file = os.path.join(sheet_input_direct, file_name)
 
-    print(resultList)
-    output = [
-        {
-            "name": songName,
-            "author": "crack for WindHide",
-            "transcribedBy": "WindHide crack",
-            "bpm": bpm,
-            "bitsPerPage": 15,
-            "pitchLevel": 0,
-            "isComposed": True,
-            "songNotes": parse_result_list(resultList, bpm),  # 将解析后的结果放入 songNotes 字段
-            "isEncrypted": False,
-        }
-    ]
-    output_file = os.path.join(user_desktop_dir(), f"{songName}.txt")
-    with open(output_file, "w") as f:
-        json.dump(output, f, ensure_ascii=False, indent=4)
+        encoding = detect_encoding(source_file)
+        if encoding is None:
+            print(f"无法检测编码，跳过文件: {source_file}")
+            continue
+
+        with open(source_file, 'r', encoding=encoding) as f:
+            data = json.load(f)
+        songName = data[0].get("name")
+        if songName is None:
+            print("没有获取到歌曲名字 跳过")
+            continue
+
+        print(f"开始处理文件{songName}")
+        destination_file = os.path.join(mumu_direct, file_name)
+        shutil.copy(source_file, destination_file)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["open_sheet"][0]), str(menu_buttons["open_sheet"][1])], check=True)
+        time.sleep(0.5)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["import_sheet"][0]), str(menu_buttons["import_sheet"][1])], check=True)
+        time.sleep(1.5)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["import_sheet_more"][0]), str(menu_buttons["import_sheet_more"][1])], check=True)
+        time.sleep(2)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["import_sheet_mumu_shared"][0]), str(menu_buttons["import_sheet_mumu_shared"][1])], check=True)
+        time.sleep(2)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["import_sheet_file_select"][0]), str(menu_buttons["import_sheet_file_select"][1])], check=True)
+        time.sleep(1.5)
+        subprocess.run(["adb", "-s", device, "shell", "input", "tap", str(menu_buttons["go_to_in_sheet"][0]), str(menu_buttons["go_to_in_sheet"][1])], check=True)
+        time.sleep(0.5)
+        ocr = screenshot_and_ocr_bmp_number(device, menu_buttons["bpm_area"])
+        if len(ocr) != 1:
+            continue
+
+        bpm = ocr[0]
+        while True:
+            key_status = screenshot_and_check_colors_optimized(device, key_areas)
+            resultList.append(key_status)
+            next_button(device)
+            if falseCount >= 200:
+                break
+        print(resultList)
+        output = [
+            {
+              "name": songName,
+              "author": "crack for WindHide",
+              "transcribedBy": "WindHide crack",
+              "bpm": bpm,
+              "bitsPerPage": 15,
+              "pitchLevel": 0,
+              "isComposed": True,
+              "songNotes": parse_result_list(resultList, bpm),  # 将解析后的结果放入 songNotes 字段
+              "isEncrypted": False,
+            }
+        ]
+        output_file = os.path.join(user_desktop_dir(), "crack" , f"{songName}.txt")
+        with open(output_file, "w") as f:
+            json.dump(output, f, ensure_ascii=False, indent=4)
+        os.remove(destination_file)
 
 if __name__ == "__main__":
     main()
