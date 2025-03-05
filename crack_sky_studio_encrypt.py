@@ -102,6 +102,7 @@ def process_files(device, key_areas, menu_buttons):
     for file_name in files:
         resultList = []
         falseCount = 0
+        delete_files_in_directory(mumu_direct)
         source_file = os.path.join(sheet_input_direct, file_name)
         encoding = detect_encoding(source_file)
         if not encoding:
